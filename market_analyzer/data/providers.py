@@ -258,11 +258,11 @@ class AlphaVantageProvider(DataProvider):
 
 
 class FinancialModelingPrepProvider(DataProvider):
-    """Financial Modeling Prep (FMP) data provider."""
+    """Financial Modeling Prep (FMP) data provider - Updated for new stable API (2025+)."""
 
     name = "fmp"
     requires_api_key = True
-    BASE_URL = "https://financialmodelingprep.com/api/v3"
+    BASE_URL = "https://financialmodelingprep.com/stable"
 
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv('FMP_API_KEY')
@@ -278,8 +278,17 @@ class FinancialModelingPrepProvider(DataProvider):
 
         try:
             response = requests.get(url, params=params, timeout=30)
+
+            # Handle payment required (free tier limitation)
+            if response.status_code == 402:
+                raise DataProviderError(f"FMP endpoint '{endpoint}' requires paid subscription")
+
             response.raise_for_status()
             data = response.json()
+
+            # Handle string error messages
+            if isinstance(data, str) and ('Restricted' in data or 'Error' in data):
+                raise DataProviderError(f"FMP error: {data}")
 
             if isinstance(data, dict) and 'Error Message' in data:
                 raise DataProviderError(f"FMP error: {data['Error Message']}")
@@ -289,7 +298,7 @@ class FinancialModelingPrepProvider(DataProvider):
             raise DataProviderError(f"FMP request error: {e}")
 
     def get_quote(self, ticker: str) -> Dict:
-        data = self._make_request(f"quote/{ticker}")
+        data = self._make_request("quote", {'symbol': ticker})
         if not data or len(data) == 0:
             raise DataProviderError(f"No data for {ticker}")
 
@@ -297,7 +306,7 @@ class FinancialModelingPrepProvider(DataProvider):
         return {
             'ticker': ticker,
             'price': quote.get('price'),
-            'change_percent': quote.get('changesPercentage'),
+            'change_percent': quote.get('changePercentage'),
             'volume': quote.get('volume'),
             'market_cap': quote.get('marketCap'),
             'pe_ratio': quote.get('pe'),
@@ -308,7 +317,7 @@ class FinancialModelingPrepProvider(DataProvider):
         }
 
     def get_company_info(self, ticker: str) -> Dict:
-        data = self._make_request(f"profile/{ticker}")
+        data = self._make_request("profile", {'symbol': ticker})
         if not data or len(data) == 0:
             raise DataProviderError(f"No data for {ticker}")
 
@@ -322,16 +331,20 @@ class FinancialModelingPrepProvider(DataProvider):
             'employees': profile.get('fullTimeEmployees'),
             'description': profile.get('description'),
             'website': profile.get('website'),
-            'market_cap': profile.get('mktCap'),
+            'market_cap': profile.get('marketCap'),
             'enterprise_value': None,
             'pe_ratio': profile.get('pe'),
-            'dividend_yield': profile.get('lastDiv'),
+            'dividend_yield': profile.get('lastDividend'),
             'provider': self.name,
         }
 
     def get_income_statement(self, ticker: str, quarterly: bool = True) -> pd.DataFrame:
         period = 'quarter' if quarterly else 'annual'
-        data = self._make_request(f"income-statement/{ticker}", {'period': period, 'limit': 8})
+        data = self._make_request("income-statement", {
+            'symbol': ticker,
+            'period': period,
+            'limit': 8
+        })
 
         if not data:
             return pd.DataFrame()
@@ -342,12 +355,12 @@ class FinancialModelingPrepProvider(DataProvider):
         return df.T
 
     def get_historical_prices(self, ticker: str, period: str = "1y") -> pd.DataFrame:
-        data = self._make_request(f"historical-price-full/{ticker}")
+        data = self._make_request("historical-price-eod/full", {'symbol': ticker})
 
-        if not data or 'historical' not in data:
+        if not data:
             return pd.DataFrame()
 
-        df = pd.DataFrame(data['historical'])
+        df = pd.DataFrame(data)
         df['date'] = pd.to_datetime(df['date'])
         df = df.set_index('date')
         df = df.rename(columns={

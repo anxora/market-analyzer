@@ -214,7 +214,10 @@ def get_all_us_market_tickers(min_market_cap: float = 0, exchanges: List[str] = 
 def _fetch_from_fmp_all_stocks() -> List[str]:
     """
     Fetch ALL US stock tickers from Financial Modeling Prep API.
-    Returns 10,000+ tickers. Requires FMP_API_KEY environment variable.
+
+    NOTE: The stock-list endpoint requires a paid FMP subscription as of Aug 2025.
+    Free tier only supports individual stock lookups (quote, profile, etc).
+    This function will raise an error for free tier accounts.
     """
     import os
     api_key = os.getenv('FMP_API_KEY')
@@ -222,11 +225,22 @@ def _fetch_from_fmp_all_stocks() -> List[str]:
     if not api_key:
         raise ValueError("FMP_API_KEY not set. Get free key at https://financialmodelingprep.com/developer")
 
-    url = f"https://financialmodelingprep.com/api/v3/stock/list?apikey={api_key}"
+    # New stable API format (2025+)
+    url = f"https://financialmodelingprep.com/stable/stock-list?apikey={api_key}"
 
     response = requests.get(url, timeout=30)
     response.raise_for_status()
+
+    # Check for restriction message
+    if response.headers.get('content-type', '').startswith('text/plain'):
+        text = response.text
+        if 'Restricted' in text:
+            raise ValueError("FMP stock-list endpoint requires paid subscription")
+
     data = response.json()
+
+    if isinstance(data, str) and 'Restricted' in data:
+        raise ValueError("FMP stock-list endpoint requires paid subscription")
 
     if isinstance(data, dict) and 'Error Message' in data:
         raise ValueError(data['Error Message'])
@@ -237,7 +251,7 @@ def _fetch_from_fmp_all_stocks() -> List[str]:
 
     for stock in data:
         symbol = stock.get('symbol', '')
-        exchange = stock.get('exchangeShortName', '')
+        exchange = stock.get('exchangeShortName', stock.get('exchange', ''))
 
         # Skip if not US exchange
         if exchange not in us_exchanges:
