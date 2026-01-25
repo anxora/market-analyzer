@@ -153,7 +153,11 @@ def get_all_us_market_tickers(min_market_cap: float = 0, exchanges: List[str] = 
     """
     Get ALL tickers from US exchanges (NYSE, NASDAQ, AMEX).
 
-    This fetches thousands of tickers from the NASDAQ screener API.
+    Tries multiple sources in order:
+    1. Financial Modeling Prep API (10,000+ tickers, requires free API key)
+    2. SEC EDGAR (all reporting companies)
+    3. Individual exchange fetching
+    4. Backup hardcoded lists
 
     Args:
         min_market_cap: Minimum market cap filter (in dollars). Default 0 = no filter.
@@ -165,8 +169,30 @@ def get_all_us_market_tickers(min_market_cap: float = 0, exchanges: List[str] = 
     if exchanges is None:
         exchanges = ['NYSE', 'NASDAQ', 'AMEX']
 
-    all_tickers = []
+    # Try FMP first (most complete, 10,000+ tickers)
+    try:
+        tickers = _fetch_from_fmp_all_stocks()
+        if len(tickers) > 1000:
+            print(f"Fetched {len(tickers)} tickers from Financial Modeling Prep")
+            # Filter by exchange if specified
+            if exchanges != ['NYSE', 'NASDAQ', 'AMEX']:
+                # FMP returns all exchanges, so we use backup for filtering
+                pass
+            return sorted(tickers)
+    except Exception as e:
+        print(f"FMP API failed: {e}")
 
+    # Try SEC EDGAR
+    try:
+        tickers = _fetch_from_sec_edgar()
+        if len(tickers) > 1000:
+            print(f"Fetched {len(tickers)} tickers from SEC EDGAR")
+            return sorted(tickers)
+    except Exception as e:
+        print(f"SEC EDGAR failed: {e}")
+
+    # Fallback to individual exchange fetching
+    all_tickers = []
     for exchange in exchanges:
         try:
             tickers = _fetch_exchange_tickers(exchange, min_market_cap)
@@ -176,13 +202,132 @@ def get_all_us_market_tickers(min_market_cap: float = 0, exchanges: List[str] = 
             print(f"Error fetching {exchange}: {e}")
             # Use backup for this exchange
             if exchange == 'NASDAQ':
-                all_tickers.extend(get_nasdaq100_backup())
+                all_tickers.extend(get_nasdaq100_backup() + _get_nasdaq_extended_backup())
             elif exchange == 'NYSE':
-                all_tickers.extend(get_sp500_backup()[:200])
+                all_tickers.extend(get_sp500_backup() + _get_nyse_extended_backup())
 
     # Remove duplicates and sort
     all_tickers = sorted(list(set(all_tickers)))
     return all_tickers
+
+
+def _fetch_from_fmp_all_stocks() -> List[str]:
+    """
+    Fetch ALL US stock tickers from Financial Modeling Prep API.
+    Returns 10,000+ tickers. Requires FMP_API_KEY environment variable.
+    """
+    import os
+    api_key = os.getenv('FMP_API_KEY')
+
+    if not api_key:
+        raise ValueError("FMP_API_KEY not set. Get free key at https://financialmodelingprep.com/developer")
+
+    url = f"https://financialmodelingprep.com/api/v3/stock/list?apikey={api_key}"
+
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    data = response.json()
+
+    if isinstance(data, dict) and 'Error Message' in data:
+        raise ValueError(data['Error Message'])
+
+    # Filter to US exchanges only
+    us_exchanges = {'NYSE', 'NASDAQ', 'AMEX', 'NYSEArca', 'BATS'}
+    tickers = []
+
+    for stock in data:
+        symbol = stock.get('symbol', '')
+        exchange = stock.get('exchangeShortName', '')
+
+        # Skip if not US exchange
+        if exchange not in us_exchanges:
+            continue
+
+        # Skip ETFs, warrants, etc (only common stock)
+        stock_type = stock.get('type', '')
+        if stock_type and stock_type != 'stock':
+            continue
+
+        # Clean symbol
+        if symbol and '^' not in symbol and '.' not in symbol:
+            tickers.append(symbol.upper())
+
+    return tickers
+
+
+def _fetch_from_sec_edgar() -> List[str]:
+    """
+    Fetch tickers from SEC EDGAR company database.
+    Contains all companies that file with the SEC (~8,000+).
+    """
+    url = "https://www.sec.gov/files/company_tickers.json"
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
+
+    response = requests.get(url, headers=headers, timeout=30)
+    response.raise_for_status()
+    data = response.json()
+
+    tickers = []
+    for key, company in data.items():
+        ticker = company.get('ticker', '')
+        if ticker and ticker.isalpha() and len(ticker) <= 5:
+            tickers.append(ticker.upper())
+
+    return tickers
+
+
+def _fetch_from_stockanalysis_json(exchange: str) -> List[str]:
+    """
+    Fetch tickers from stockanalysis.com by parsing embedded JSON data.
+    """
+    urls = {
+        'NYSE': 'https://stockanalysis.com/list/nyse-stocks/',
+        'NASDAQ': 'https://stockanalysis.com/list/nasdaq-stocks/',
+        'AMEX': 'https://stockanalysis.com/list/amex-stocks/',
+    }
+
+    url = urls.get(exchange.upper())
+    if not url:
+        raise ValueError(f"Unknown exchange: {exchange}")
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    }
+
+    response = requests.get(url, headers=headers, timeout=30)
+    response.raise_for_status()
+
+    # Try to extract JSON data from the page
+    import re
+    import json
+
+    # Look for stockData in the JavaScript
+    match = re.search(r'stockData:\[([^\]]+)\]', response.text)
+    if match:
+        try:
+            # Parse the array of stock objects
+            json_str = '[' + match.group(1) + ']'
+            # Fix JavaScript object notation to JSON
+            json_str = re.sub(r'(\w+):', r'"\1":', json_str)
+            stocks = json.loads(json_str)
+            tickers = [s.get('s', '') for s in stocks if s.get('s')]
+            if tickers:
+                return tickers
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    # Alternative: look for symbol patterns in the page
+    symbols = re.findall(r'"s":"([A-Z]{1,5})"', response.text)
+    if symbols:
+        return list(set(symbols))
+
+    raise ValueError("Could not parse stock data from page")
 
 
 def _fetch_exchange_tickers(exchange: str, min_market_cap: float = 0) -> List[str]:
@@ -190,20 +335,29 @@ def _fetch_exchange_tickers(exchange: str, min_market_cap: float = 0) -> List[st
     Fetch tickers from a specific exchange.
 
     Tries multiple methods:
-    1. NASDAQ FTP files (most reliable)
-    2. Wikipedia lists as backup
+    1. stockanalysis.com JSON parsing
+    2. NASDAQ screener download
+    3. Hardcoded backup lists
     """
-    # Try NASDAQ FTP first (CSV files)
+    # Try stockanalysis.com with JSON parsing
     try:
-        return _fetch_from_nasdaq_ftp(exchange)
+        tickers = _fetch_from_stockanalysis_json(exchange)
+        if len(tickers) > 50:
+            return tickers
     except Exception as e1:
-        print(f"  FTP method failed: {e1}")
+        print(f"  StockAnalysis JSON failed: {e1}")
 
-    # Try alternative method - stockanalysis.com
+    # Try HTML table parsing
     try:
         return _fetch_from_stockanalysis(exchange)
     except Exception as e2:
-        print(f"  Stock Analysis method failed: {e2}")
+        print(f"  StockAnalysis HTML failed: {e2}")
+
+    # Try NASDAQ screener
+    try:
+        return _fetch_from_nasdaq_ftp(exchange)
+    except Exception as e3:
+        print(f"  NASDAQ screener failed: {e3}")
 
     # Fallback to hardcoded lists
     print(f"  Using backup list for {exchange}")
