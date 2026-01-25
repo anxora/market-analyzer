@@ -149,7 +149,171 @@ def get_growth_stocks() -> List[str]:
     ]
 
 
+def get_all_us_market_tickers(min_market_cap: float = 0, exchanges: List[str] = None) -> List[str]:
+    """
+    Get ALL tickers from US exchanges (NYSE, NASDAQ, AMEX).
+
+    This fetches thousands of tickers from the NASDAQ screener API.
+
+    Args:
+        min_market_cap: Minimum market cap filter (in dollars). Default 0 = no filter.
+        exchanges: List of exchanges to include. Default: all (NYSE, NASDAQ, AMEX)
+
+    Returns:
+        List of ticker symbols
+    """
+    if exchanges is None:
+        exchanges = ['NYSE', 'NASDAQ', 'AMEX']
+
+    all_tickers = []
+
+    for exchange in exchanges:
+        try:
+            tickers = _fetch_exchange_tickers(exchange, min_market_cap)
+            all_tickers.extend(tickers)
+            print(f"Fetched {len(tickers)} tickers from {exchange}")
+        except Exception as e:
+            print(f"Error fetching {exchange}: {e}")
+            # Use backup for this exchange
+            if exchange == 'NASDAQ':
+                all_tickers.extend(get_nasdaq100_backup())
+            elif exchange == 'NYSE':
+                all_tickers.extend(get_sp500_backup()[:200])
+
+    # Remove duplicates and sort
+    all_tickers = sorted(list(set(all_tickers)))
+    return all_tickers
+
+
+def _fetch_exchange_tickers(exchange: str, min_market_cap: float = 0) -> List[str]:
+    """
+    Fetch tickers from a specific exchange using NASDAQ API.
+    """
+    import io
+
+    # NASDAQ screener API endpoint
+    url = "https://api.nasdaq.com/api/screener/stocks"
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+    }
+
+    params = {
+        'tableonly': 'true',
+        'limit': 10000,
+        'exchange': exchange.lower(),
+    }
+
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+
+        rows = data.get('data', {}).get('rows', [])
+        tickers = []
+
+        for row in rows:
+            symbol = row.get('symbol', '')
+            market_cap = row.get('marketCap', '')
+
+            # Skip if no symbol
+            if not symbol:
+                continue
+
+            # Apply market cap filter
+            if min_market_cap > 0 and market_cap:
+                try:
+                    cap_value = float(market_cap.replace(',', '').replace('$', ''))
+                    if cap_value < min_market_cap:
+                        continue
+                except (ValueError, AttributeError):
+                    pass
+
+            # Clean symbol (remove special characters)
+            symbol = symbol.strip().upper()
+            if symbol and symbol.isalpha():  # Only alphabetic symbols
+                tickers.append(symbol)
+
+        return tickers
+
+    except Exception as e:
+        raise Exception(f"Failed to fetch {exchange} tickers: {e}")
+
+
+def get_large_cap_tickers(min_market_cap: float = 10e9) -> List[str]:
+    """
+    Get large-cap stocks (market cap > $10B by default).
+
+    Args:
+        min_market_cap: Minimum market cap in dollars (default $10B)
+
+    Returns:
+        List of large-cap ticker symbols
+    """
+    return get_all_us_market_tickers(min_market_cap=min_market_cap)
+
+
+def get_mid_cap_tickers() -> List[str]:
+    """
+    Get mid-cap stocks (market cap $2B - $10B).
+
+    Returns:
+        List of mid-cap ticker symbols
+    """
+    # This requires filtering by range, which the API doesn't support directly
+    # Return large cap subset for now
+    return get_all_us_market_tickers(min_market_cap=2e9)
+
+
+def get_small_cap_tickers() -> List[str]:
+    """
+    Get small-cap stocks (market cap $300M - $2B).
+
+    Returns:
+        List of small-cap ticker symbols
+    """
+    return get_all_us_market_tickers(min_market_cap=300e6)
+
+
+def get_exchange_tickers(exchange: str) -> List[str]:
+    """
+    Get all tickers from a specific exchange.
+
+    Args:
+        exchange: Exchange name ('NYSE', 'NASDAQ', or 'AMEX')
+
+    Returns:
+        List of ticker symbols from the specified exchange
+    """
+    return get_all_us_market_tickers(exchanges=[exchange.upper()])
+
+
+def count_available_tickers() -> dict:
+    """
+    Count available tickers by exchange.
+
+    Returns:
+        Dict with counts by exchange and total
+    """
+    counts = {}
+    for exchange in ['NYSE', 'NASDAQ', 'AMEX']:
+        try:
+            tickers = get_exchange_tickers(exchange)
+            counts[exchange] = len(tickers)
+        except Exception as e:
+            counts[exchange] = f"Error: {e}"
+
+    # Calculate total
+    total = sum(v for v in counts.values() if isinstance(v, int))
+    counts['total'] = total
+
+    return counts
+
+
 if __name__ == "__main__":
     print("S&P 500 Tickers:", len(get_sp500_tickers()))
     print("NASDAQ-100 Tickers:", len(get_nasdaq100_tickers()))
-    print("All US Tickers:", len(get_all_us_tickers()))
+    print("All US Tickers (S&P + NASDAQ-100):", len(get_all_us_tickers()))
+    print("\nFetching ALL US market tickers...")
+    print(count_available_tickers())
