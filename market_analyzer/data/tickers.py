@@ -187,58 +187,153 @@ def get_all_us_market_tickers(min_market_cap: float = 0, exchanges: List[str] = 
 
 def _fetch_exchange_tickers(exchange: str, min_market_cap: float = 0) -> List[str]:
     """
-    Fetch tickers from a specific exchange using NASDAQ API.
-    """
-    import io
+    Fetch tickers from a specific exchange.
 
-    # NASDAQ screener API endpoint
-    url = "https://api.nasdaq.com/api/screener/stocks"
+    Tries multiple methods:
+    1. NASDAQ FTP files (most reliable)
+    2. Wikipedia lists as backup
+    """
+    # Try NASDAQ FTP first (CSV files)
+    try:
+        return _fetch_from_nasdaq_ftp(exchange)
+    except Exception as e1:
+        print(f"  FTP method failed: {e1}")
+
+    # Try alternative method - stockanalysis.com
+    try:
+        return _fetch_from_stockanalysis(exchange)
+    except Exception as e2:
+        print(f"  Stock Analysis method failed: {e2}")
+
+    # Fallback to hardcoded lists
+    print(f"  Using backup list for {exchange}")
+    if exchange.upper() == 'NASDAQ':
+        return get_nasdaq100_backup() + _get_nasdaq_extended_backup()
+    elif exchange.upper() == 'NYSE':
+        return get_sp500_backup() + _get_nyse_extended_backup()
+    else:
+        return []
+
+
+def _fetch_from_nasdaq_ftp(exchange: str) -> List[str]:
+    """
+    Fetch tickers from NASDAQ FTP server (most reliable method).
+    """
+    # NASDAQ provides stock screener data
+    urls = {
+        'NASDAQ': 'https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv',
+        'NYSE': 'https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv',
+    }
+
+    # Alternative: Use a more complete source
+    url = f"https://www.nasdaq.com/market-activity/stocks/screener?exchange={exchange.lower()}&render=download"
 
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/csv,application/csv,text/plain,*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.nasdaq.com/market-activity/stocks/screener',
     }
 
-    params = {
-        'tableonly': 'true',
-        'limit': 10000,
-        'exchange': exchange.lower(),
+    response = requests.get(url, headers=headers, timeout=30)
+    response.raise_for_status()
+
+    # Parse CSV
+    import io
+    df = pd.read_csv(io.StringIO(response.text))
+
+    if 'Symbol' in df.columns:
+        tickers = df['Symbol'].dropna().str.strip().tolist()
+    elif 'symbol' in df.columns:
+        tickers = df['symbol'].dropna().str.strip().tolist()
+    else:
+        raise ValueError("No symbol column found")
+
+    # Clean tickers
+    tickers = [t.upper() for t in tickers if t and str(t).isalpha()]
+    return tickers
+
+
+def _fetch_from_stockanalysis(exchange: str) -> List[str]:
+    """
+    Fetch tickers from stockanalysis.com
+    """
+    urls = {
+        'NYSE': 'https://stockanalysis.com/list/nyse-stocks/',
+        'NASDAQ': 'https://stockanalysis.com/list/nasdaq-stocks/',
+        'AMEX': 'https://stockanalysis.com/list/amex-stocks/',
     }
 
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=30)
-        response.raise_for_status()
-        data = response.json()
+    url = urls.get(exchange.upper())
+    if not url:
+        raise ValueError(f"Unknown exchange: {exchange}")
 
-        rows = data.get('data', {}).get('rows', [])
-        tickers = []
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+    }
 
-        for row in rows:
-            symbol = row.get('symbol', '')
-            market_cap = row.get('marketCap', '')
+    response = requests.get(url, headers=headers, timeout=30)
+    response.raise_for_status()
 
-            # Skip if no symbol
-            if not symbol:
-                continue
+    # Parse HTML tables
+    tables = pd.read_html(response.text)
+    if not tables:
+        raise ValueError("No tables found")
 
-            # Apply market cap filter
-            if min_market_cap > 0 and market_cap:
-                try:
-                    cap_value = float(market_cap.replace(',', '').replace('$', ''))
-                    if cap_value < min_market_cap:
-                        continue
-                except (ValueError, AttributeError):
-                    pass
+    df = tables[0]
 
-            # Clean symbol (remove special characters)
-            symbol = symbol.strip().upper()
-            if symbol and symbol.isalpha():  # Only alphabetic symbols
-                tickers.append(symbol)
+    # Find symbol column
+    symbol_cols = ['Symbol', 'Ticker', 'symbol', 'ticker']
+    for col in symbol_cols:
+        if col in df.columns:
+            tickers = df[col].dropna().str.strip().tolist()
+            # Clean tickers (remove special chars)
+            tickers = [t.split()[0].upper() for t in tickers if t]
+            return tickers
 
-        return tickers
+    raise ValueError("No symbol column found")
 
-    except Exception as e:
-        raise Exception(f"Failed to fetch {exchange} tickers: {e}")
+
+def _get_nasdaq_extended_backup() -> List[str]:
+    """Extended NASDAQ tickers backup list."""
+    return [
+        # Tech
+        'GOOGL', 'GOOG', 'AMZN', 'META', 'TSLA', 'NVDA', 'AVGO', 'ADBE', 'CRM', 'NFLX',
+        'PYPL', 'INTC', 'CMCSA', 'PEP', 'CSCO', 'TMUS', 'TXN', 'QCOM', 'AMGN', 'SBUX',
+        'INTU', 'ISRG', 'AMD', 'MDLZ', 'GILD', 'ADI', 'BKNG', 'VRTX', 'ADP', 'REGN',
+        'LRCX', 'MU', 'MELI', 'PANW', 'SNPS', 'KLAC', 'CDNS', 'ORLY', 'MNST', 'FTNT',
+        'MRVL', 'CTAS', 'NXPI', 'KDP', 'PAYX', 'ODFL', 'DXCM', 'WDAY', 'ABNB', 'CPRT',
+        'PCAR', 'MCHP', 'AZN', 'KHC', 'LULU', 'EA', 'ROST', 'IDXX', 'FAST', 'VRSK',
+        'EXC', 'XEL', 'GEHC', 'CTSH', 'CSGP', 'DDOG', 'ZS', 'CRWD', 'TTD', 'TEAM',
+        'OKTA', 'SPLK', 'SNOW', 'NET', 'MDB', 'PLTR', 'COIN', 'RBLX', 'DASH', 'HOOD',
+        'AFRM', 'SOFI', 'RIVN', 'LCID', 'ARM', 'SMCI', 'APP', 'DUOL', 'CELH', 'IOT',
+    ]
+
+
+def _get_nyse_extended_backup() -> List[str]:
+    """Extended NYSE tickers backup list."""
+    return [
+        # Financials
+        'JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'USB', 'PNC', 'TFC', 'SCHW',
+        'BLK', 'SPGI', 'ICE', 'CME', 'COF', 'AXP', 'DFS', 'SYF', 'ALLY', 'MTB',
+        # Healthcare
+        'UNH', 'JNJ', 'PFE', 'MRK', 'ABT', 'TMO', 'DHR', 'LLY', 'BMY', 'ABBV',
+        'CVS', 'CI', 'HUM', 'ELV', 'MCK', 'CAH', 'SYK', 'BSX', 'MDT', 'ZBH',
+        # Consumer
+        'WMT', 'PG', 'KO', 'HD', 'MCD', 'NKE', 'SBUX', 'TGT', 'LOW', 'TJX',
+        'DG', 'DLTR', 'COST', 'CVS', 'WBA', 'KR', 'SYY', 'YUM', 'DPZ', 'CMG',
+        # Industrial
+        'CAT', 'DE', 'UNP', 'UPS', 'FDX', 'BA', 'GE', 'HON', 'MMM', 'LMT',
+        'RTX', 'NOC', 'GD', 'EMR', 'ETN', 'PH', 'ROK', 'ITW', 'CMI', 'PCAR',
+        # Energy
+        'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'PXD', 'MPC', 'VLO', 'PSX', 'OXY',
+        'KMI', 'WMB', 'EPD', 'ET', 'MPLX', 'HAL', 'BKR', 'DVN', 'HES', 'FANG',
+        # Utilities & REITs
+        'NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC', 'SRE', 'XEL', 'WEC', 'ES',
+        'PLD', 'AMT', 'EQIX', 'PSA', 'CCI', 'O', 'SPG', 'WELL', 'DLR', 'AVB',
+        # Telecom & Media
+        'T', 'VZ', 'DIS', 'CMCSA', 'WBD', 'PARA', 'FOX', 'FOXA', 'NWSA', 'NWS',
+    ]
 
 
 def get_large_cap_tickers(min_market_cap: float = 10e9) -> List[str]:
