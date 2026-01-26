@@ -1,14 +1,15 @@
 """
-NVDA Intraday Trading Bot - Breakout Strategy
+NVDA Intraday Trading Bot - Volatility Breakout Strategy
 
-Trades NVDA based on Donchian Channel Breakout + Momentum.
-Backtested: +8.73% return (vs -3.90% buy&hold), 42.7% win rate, 1.44 profit factor.
+Trades NVDA based on Volatility Breakout (compression + breakout).
+Backtested: +27.65% return (vs -6.65% buy&hold), 45% win rate, 1.84 profit factor.
 
 Strategy:
-    - LONG: Price breaks 10-bar high + Momentum > 1%
-    - SHORT: Price breaks 10-bar low + Momentum < -1%
+    - Wait for LOW volatility (< 1.2%) = price compression
+    - LONG: Price breaks 7-bar high during compression
+    - SHORT: Price breaks 7-bar low during compression
     - Stop Loss: 1.5 × ATR (dynamic)
-    - Take Profit: 3.0 × ATR
+    - Take Profit: 3.5 × ATR
 
 Usage:
     # Paper trading (simulated)
@@ -29,7 +30,7 @@ from typing import Optional, Dict
 import pandas as pd
 import yfinance as yf
 
-from .signals import BreakoutSignalGenerator, BreakoutSignal, Signal
+from .signals import VolatilityBreakoutSignalGenerator, VolatilityBreakoutSignal, Signal
 from .broker import IBBroker, SimulatedBroker, OrderResult
 
 logging.basicConfig(
@@ -40,15 +41,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class BreakoutTradingBot:
+class VolatilityBreakoutTradingBot:
     """
-    Intraday trading bot using Donchian Channel Breakout strategy.
+    Intraday trading bot using Volatility Breakout strategy.
 
-    Strategy (backtested +8.73% vs -3.90% buy&hold, 60 days):
-    - LONG: Price breaks above 10-bar high + Momentum > 1%
-    - SHORT: Price breaks below 10-bar low + Momentum < -1%
+    Strategy (backtested +27.65% vs -6.65% buy&hold, 60 days):
+    - Wait for LOW volatility (< 1.2%) = price compression
+    - LONG: Price breaks above 7-bar high during compression
+    - SHORT: Price breaks below 7-bar low during compression
     - Stop Loss: 1.5 × ATR
-    - Take Profit: 3.0 × ATR
+    - Take Profit: 3.5 × ATR
     - Risk per trade: 0.3% of account
     """
 
@@ -61,20 +63,20 @@ class BreakoutTradingBot:
         ib_port: int = 4002,
         paper_trading: bool = True,
         initial_capital: float = 100000,
-        channel_period: int = 10,
-        momentum_threshold: float = 0.01,  # 1%
+        lookback_period: int = 7,
+        volatility_threshold: float = 0.012,  # 1.2%
         stop_atr_mult: float = 1.5,
-        tp_atr_mult: float = 3.0,
+        tp_atr_mult: float = 3.5,
     ):
         self.symbol = symbol
         self.risk_per_trade = risk_per_trade
         self.check_interval = check_interval_seconds
         self.paper_trading = paper_trading
 
-        # Initialize breakout signal generator
-        self.signal_generator = BreakoutSignalGenerator(
-            channel_period=channel_period,
-            momentum_threshold=momentum_threshold,
+        # Initialize volatility breakout signal generator
+        self.signal_generator = VolatilityBreakoutSignalGenerator(
+            lookback_period=lookback_period,
+            volatility_threshold=volatility_threshold,
             stop_atr_multiplier=stop_atr_mult,
             tp_atr_multiplier=tp_atr_mult,
             risk_per_trade=risk_per_trade / 100,
@@ -96,7 +98,7 @@ class BreakoutTradingBot:
         self.running = False
         self.position: Optional[Dict] = None  # Track current position with stops
         self.trade_log = []
-        self.last_signal: Optional[BreakoutSignal] = None
+        self.last_signal: Optional[VolatilityBreakoutSignal] = None
 
     def get_intraday_data(self, period: str = "5d", interval: str = "5m") -> pd.DataFrame:
         """Fetch intraday data for analysis."""
@@ -154,8 +156,8 @@ class BreakoutTradingBot:
 
         return None
 
-    def execute_entry(self, signal: BreakoutSignal) -> Optional[OrderResult]:
-        """Execute entry trade based on breakout signal."""
+    def execute_entry(self, signal: VolatilityBreakoutSignal) -> Optional[OrderResult]:
+        """Execute entry trade based on volatility breakout signal."""
         if signal.direction == 0:
             return None
 
@@ -177,7 +179,7 @@ class BreakoutTradingBot:
         risk_amount = abs(signal.entry_price - signal.stop_loss) * position_size
 
         logger.info(f"\n{'='*60}")
-        logger.info(f"BREAKOUT {action} SIGNAL DETECTED")
+        logger.info(f"VOLATILITY BREAKOUT {action} SIGNAL DETECTED")
         logger.info(f"{'='*60}")
         logger.info(f"  Symbol:       {self.symbol}")
         logger.info(f"  Direction:    {'LONG' if signal.direction == 1 else 'SHORT'}")
@@ -185,8 +187,8 @@ class BreakoutTradingBot:
         logger.info(f"  Stop Loss:    ${signal.stop_loss:.2f}")
         logger.info(f"  Take Profit:  ${signal.take_profit:.2f}")
         logger.info(f"  ATR:          ${signal.atr:.2f}")
-        logger.info(f"  Momentum:     {signal.momentum*100:+.2f}%")
-        logger.info(f"  Channel:      ${signal.channel_low:.2f} - ${signal.channel_high:.2f}")
+        logger.info(f"  Volatility:   {signal.volatility*100:.2f}%")
+        logger.info(f"  Range:        ${signal.recent_low:.2f} - ${signal.recent_high:.2f}")
         logger.info(f"  Position Size: {position_size} shares")
         logger.info(f"  Position Value: ${position_size * signal.entry_price:,.2f}")
         logger.info(f"  Risk Amount:  ${risk_amount:,.2f} ({self.risk_per_trade}%)")
@@ -278,7 +280,7 @@ class BreakoutTradingBot:
 
         return result
 
-    def run_once(self) -> Optional[BreakoutSignal]:
+    def run_once(self) -> Optional[VolatilityBreakoutSignal]:
         """Run a single analysis and trade cycle."""
         # Fetch current data
         data = self.get_intraday_data()
@@ -303,15 +305,16 @@ class BreakoutTradingBot:
         signal = self.signal_generator.generate_signal(data)
         self.last_signal = signal
 
-        # Get channel status
-        status = self.signal_generator.get_channel_status(data)
+        # Get status
+        status = self.signal_generator.get_status(data)
 
         # Log current status
         logger.info(f"\n[{self.symbol}] Price: ${current_price:.2f}")
-        logger.info(f"  Channel: ${status['channel_low']:.2f} - ${status['channel_high']:.2f}")
+        logger.info(f"  Volatility: {status['volatility_pct']:.2f}% (threshold: {status['volatility_threshold_pct']:.1f}%)")
+        logger.info(f"  Compressed: {'YES' if status['is_compressed'] else 'NO'}")
+        logger.info(f"  Range: ${status['recent_low']:.2f} - ${status['recent_high']:.2f}")
         logger.info(f"  Distance to High: {status['distance_to_high_pct']:.2f}%")
         logger.info(f"  Distance to Low: {status['distance_to_low_pct']:.2f}%")
-        logger.info(f"  Momentum: {status['momentum_pct']:+.2f}%")
         logger.info(f"  ATR: ${status['atr']:.2f}")
 
         if self.position:
@@ -321,10 +324,10 @@ class BreakoutTradingBot:
             logger.info(f"  Unrealized P&L: ${unrealized:+,.2f}")
         else:
             logger.info(f"  Position: None")
-            if status['near_breakout_long']:
-                logger.info(f"  ⚡ NEAR LONG BREAKOUT!")
-            if status['near_breakout_short']:
-                logger.info(f"  ⚡ NEAR SHORT BREAKOUT!")
+            if status['ready_for_long']:
+                logger.info(f"  ⚡ READY FOR LONG BREAKOUT!")
+            if status['ready_for_short']:
+                logger.info(f"  ⚡ READY FOR SHORT BREAKOUT!")
 
         # Execute entry if signal and no position
         if signal.direction != 0 and not self.position:
@@ -335,9 +338,9 @@ class BreakoutTradingBot:
     def run(self):
         """Run the trading bot continuously."""
         logger.info(f"\n{'='*60}")
-        logger.info(f"BREAKOUT TRADING BOT - {self.symbol}")
+        logger.info(f"VOLATILITY BREAKOUT TRADING BOT - {self.symbol}")
         logger.info(f"{'='*60}")
-        logger.info(f"Strategy: Donchian Channel Breakout + Momentum")
+        logger.info(f"Strategy: Volatility Breakout (Compression + Breakout)")
         logger.info(f"Risk Per Trade: {self.risk_per_trade}%")
         logger.info(f"Check Interval: {self.check_interval} seconds")
         logger.info(f"Mode: {'Paper Trading' if self.paper_trading else 'LIVE TRADING'}")
@@ -434,22 +437,23 @@ class BreakoutTradingBot:
         logger.info(f"{'='*60}\n")
 
 
-# Keep old TradingBot for backwards compatibility
-TradingBot = BreakoutTradingBot
+# Alias for backwards compatibility
+TradingBot = VolatilityBreakoutTradingBot
+BreakoutTradingBot = VolatilityBreakoutTradingBot
 
 
 def main():
-    parser = argparse.ArgumentParser(description='NVDA Breakout Trading Bot')
+    parser = argparse.ArgumentParser(description='NVDA Volatility Breakout Trading Bot')
     parser.add_argument('--symbol', default='NVDA', help='Stock symbol to trade')
     parser.add_argument('--risk', type=float, default=0.3, help='Risk per trade (%)')
     parser.add_argument('--interval', type=int, default=60, help='Check interval (seconds)')
     parser.add_argument('--capital', type=float, default=100000, help='Initial capital for simulation')
 
-    # Strategy parameters (optimized via backtest)
-    parser.add_argument('--channel', type=int, default=10, help='Donchian channel period')
-    parser.add_argument('--momentum', type=float, default=0.01, help='Momentum threshold (0.01 = 1%)')
+    # Strategy parameters (optimized via backtest: +27.65%)
+    parser.add_argument('--lookback', type=int, default=7, help='Lookback period for breakout')
+    parser.add_argument('--vol-threshold', type=float, default=0.012, help='Volatility threshold (0.012 = 1.2%)')
     parser.add_argument('--stop-atr', type=float, default=1.5, help='Stop loss ATR multiplier')
-    parser.add_argument('--tp-atr', type=float, default=3.0, help='Take profit ATR multiplier')
+    parser.add_argument('--tp-atr', type=float, default=3.5, help='Take profit ATR multiplier')
 
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument('--paper', action='store_true', help='Simulated paper trading (default)')
@@ -476,7 +480,7 @@ def main():
             logger.info("Live trading cancelled.")
             return
 
-    bot = BreakoutTradingBot(
+    bot = VolatilityBreakoutTradingBot(
         symbol=args.symbol,
         risk_per_trade=args.risk,
         check_interval_seconds=args.interval,
@@ -484,8 +488,8 @@ def main():
         ib_port=ib_port,
         paper_trading=paper_trading,
         initial_capital=args.capital,
-        channel_period=args.channel,
-        momentum_threshold=args.momentum,
+        lookback_period=args.lookback,
+        volatility_threshold=args.vol_threshold,
         stop_atr_mult=args.stop_atr,
         tp_atr_mult=args.tp_atr,
     )
