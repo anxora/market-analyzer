@@ -2,13 +2,13 @@
 NVDA Intraday Trading Bot - Breakout Strategy
 
 Trades NVDA based on Donchian Channel Breakout + Momentum.
-Backtested: +24% return, 64% win rate, 2.34 profit factor.
+Backtested: +8.73% return (vs -3.90% buy&hold), 42.7% win rate, 1.44 profit factor.
 
 Strategy:
-    - LONG: Price breaks 20-bar high + Momentum > 1%
-    - SHORT: Price breaks 20-bar low + Momentum < -1%
+    - LONG: Price breaks 10-bar high + Momentum > 1%
+    - SHORT: Price breaks 10-bar low + Momentum < -1%
     - Stop Loss: 1.5 × ATR (dynamic)
-    - Take Profit: 2.0 × ATR
+    - Take Profit: 3.0 × ATR
 
 Usage:
     # Paper trading (simulated)
@@ -44,11 +44,11 @@ class BreakoutTradingBot:
     """
     Intraday trading bot using Donchian Channel Breakout strategy.
 
-    Strategy (backtested +24% in 60 days):
-    - LONG: Price breaks above 20-bar high + Momentum > 1%
-    - SHORT: Price breaks below 20-bar low + Momentum < -1%
+    Strategy (backtested +8.73% vs -3.90% buy&hold, 60 days):
+    - LONG: Price breaks above 10-bar high + Momentum > 1%
+    - SHORT: Price breaks below 10-bar low + Momentum < -1%
     - Stop Loss: 1.5 × ATR
-    - Take Profit: 2.0 × ATR
+    - Take Profit: 3.0 × ATR
     - Risk per trade: 0.3% of account
     """
 
@@ -61,10 +61,10 @@ class BreakoutTradingBot:
         ib_port: int = 4002,
         paper_trading: bool = True,
         initial_capital: float = 100000,
-        channel_period: int = 20,
+        channel_period: int = 10,
         momentum_threshold: float = 0.01,  # 1%
         stop_atr_mult: float = 1.5,
-        tp_atr_mult: float = 2.0,
+        tp_atr_mult: float = 3.0,
     ):
         self.symbol = symbol
         self.risk_per_trade = risk_per_trade
@@ -445,11 +445,11 @@ def main():
     parser.add_argument('--interval', type=int, default=60, help='Check interval (seconds)')
     parser.add_argument('--capital', type=float, default=100000, help='Initial capital for simulation')
 
-    # Strategy parameters
-    parser.add_argument('--channel', type=int, default=20, help='Donchian channel period')
+    # Strategy parameters (optimized via backtest)
+    parser.add_argument('--channel', type=int, default=10, help='Donchian channel period')
     parser.add_argument('--momentum', type=float, default=0.01, help='Momentum threshold (0.01 = 1%)')
     parser.add_argument('--stop-atr', type=float, default=1.5, help='Stop loss ATR multiplier')
-    parser.add_argument('--tp-atr', type=float, default=2.0, help='Take profit ATR multiplier')
+    parser.add_argument('--tp-atr', type=float, default=3.0, help='Take profit ATR multiplier')
 
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument('--paper', action='store_true', help='Simulated paper trading (default)')
