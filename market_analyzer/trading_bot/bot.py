@@ -101,7 +101,26 @@ class VolatilityBreakoutTradingBot:
         self.last_signal: Optional[VolatilityBreakoutSignal] = None
 
     def get_intraday_data(self, period: str = "5d", interval: str = "5m") -> pd.DataFrame:
-        """Fetch intraday data for analysis."""
+        """
+        Fetch intraday data for analysis.
+
+        Uses IB real-time data when connected, falls back to Yahoo Finance for paper trading.
+        """
+        # If connected to IB, use IB's real-time data
+        if isinstance(self.broker, IBBroker) and self.broker.is_connected():
+            try:
+                data = self.broker.get_historical_data(
+                    self.symbol,
+                    duration="5 D",
+                    bar_size="5 mins"
+                )
+                if not data.empty:
+                    logger.debug(f"Using IB real-time data: {len(data)} bars")
+                    return data
+            except Exception as e:
+                logger.warning(f"IB data error, falling back to Yahoo: {e}")
+
+        # Fallback to Yahoo Finance (for simulated trading or IB error)
         try:
             data = yf.download(
                 self.symbol,
