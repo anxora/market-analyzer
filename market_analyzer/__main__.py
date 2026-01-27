@@ -10,38 +10,18 @@ from .backtest import BacktestEngine
 console = Console()
 
 
-@click.group()
-def cli():
-    """Market Analyzer - Stock analysis and backtesting tool."""
-    pass
-
-
-@cli.command()
-@click.option("--symbol", "-s", required=True, help="Stock ticker symbol (e.g., AAPL)")
-@click.option("--analysis", "-a", type=click.Choice(["all", "fundamental", "technical", "valuation"]), default="all")
-def analyze(symbol: str, analysis: str):
-    """Analyze a stock with fundamentals, technicals and valuations."""
-    console.print(f"[bold blue]Market Analyzer[/bold blue]")
-    console.print(f"Analyzing: [green]{symbol.upper()}[/green]")
-    console.print(f"Analysis type: {analysis}")
-
-    # TODO: Implement analysis modules
-    console.print("[yellow]Analysis modules coming soon...[/yellow]")
-
-
-@cli.command()
-@click.option("--symbol", "-s", required=True, help="Stock ticker symbol (e.g., AAPL)")
-@click.option("--strategy", "-st", type=click.Choice(["breakout", "sma", "rsi", "momentum"]), default="breakout",
-              help="Trading strategy to backtest")
+@click.command()
+@click.option("--symbol", "-s", required=True, help="Stock ticker symbol (e.g., NVDA)")
 @click.option("--capital", "-c", default=10000.0, help="Initial capital for backtest")
 @click.option("--period", "-p", default="1mo", help="Historical period (1d, 5d, 1mo, 3mo, 6mo, 1y)")
-@click.option("--yesterday", "-y", is_flag=True, help="Run backtest on yesterday's data only")
-def backtest(symbol: str, strategy: str, capital: float, period: str, yesterday: bool):
-    """Run backtest on a trading strategy."""
-    console.print(f"[bold blue]Market Analyzer - Backtest[/bold blue]")
+@click.option("--yesterday", "-y", is_flag=True, help="Run backtest including yesterday's data")
+@click.option("--k", default=0.5, help="Breakout multiplier (default 0.5)")
+def main(symbol: str, capital: float, period: str, yesterday: bool, k: float):
+    """Run volatility breakout backtest on a stock."""
+    console.print(f"[bold blue]Market Analyzer - Volatility Breakout[/bold blue]")
     console.print(f"Symbol: [green]{symbol.upper()}[/green]")
-    console.print(f"Strategy: [cyan]{strategy.upper()}[/cyan]")
     console.print(f"Initial Capital: [yellow]${capital:,.2f}[/yellow]")
+    console.print(f"K Factor: [cyan]{k}[/cyan]")
     console.print()
 
     with console.status("[bold green]Fetching historical data..."):
@@ -58,8 +38,8 @@ def backtest(symbol: str, strategy: str, capital: float, period: str, yesterday:
     console.print()
 
     with console.status("[bold green]Running backtest..."):
-        engine = BacktestEngine(initial_capital=capital)
-        result = engine.run(df, symbol.upper(), strategy)
+        engine = BacktestEngine(initial_capital=capital, k=k)
+        result = engine.run(df, symbol.upper())
 
     # Display results
     console.print(result.summary())
@@ -68,9 +48,8 @@ def backtest(symbol: str, strategy: str, capital: float, period: str, yesterday:
     if result.trades:
         console.print()
         table = Table(title="Trade History")
-        table.add_column("Entry Date", style="cyan")
+        table.add_column("Date", style="cyan")
         table.add_column("Entry Price", justify="right")
-        table.add_column("Exit Date", style="cyan")
         table.add_column("Exit Price", justify="right")
         table.add_column("Shares", justify="right")
         table.add_column("P/L", justify="right")
@@ -79,9 +58,8 @@ def backtest(symbol: str, strategy: str, capital: float, period: str, yesterday:
         for trade in result.trades:
             pl_color = "green" if trade.profit_loss >= 0 else "red"
             table.add_row(
-                trade.entry_time.strftime("%Y-%m-%d %H:%M"),
+                trade.entry_time.strftime("%Y-%m-%d"),
                 f"${trade.entry_price:.2f}",
-                trade.exit_time.strftime("%Y-%m-%d %H:%M"),
                 f"${trade.exit_price:.2f}",
                 str(trade.shares),
                 f"[{pl_color}]${trade.profit_loss:+,.2f}[/{pl_color}]",
@@ -89,11 +67,6 @@ def backtest(symbol: str, strategy: str, capital: float, period: str, yesterday:
             )
 
         console.print(table)
-
-
-def main():
-    """Main entry point."""
-    cli()
 
 
 if __name__ == "__main__":
