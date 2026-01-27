@@ -6,7 +6,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from .strategies import Signal, SMAStrategy, RSIStrategy, MomentumStrategy
+from .strategies import Signal, SMAStrategy, RSIStrategy, MomentumStrategy, BreakoutStrategy
 
 
 @dataclass
@@ -64,6 +64,7 @@ class BacktestEngine:
     """Engine for running backtests on trading strategies."""
 
     STRATEGIES = {
+        "breakout": BreakoutStrategy,
         "sma": SMAStrategy,
         "rsi": RSIStrategy,
         "momentum": MomentumStrategy,

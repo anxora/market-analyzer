@@ -31,7 +31,7 @@ def analyze(symbol: str, analysis: str):
 
 @cli.command()
 @click.option("--symbol", "-s", required=True, help="Stock ticker symbol (e.g., AAPL)")
-@click.option("--strategy", "-st", type=click.Choice(["sma", "rsi", "momentum"]), default="sma",
+@click.option("--strategy", "-st", type=click.Choice(["breakout", "sma", "rsi", "momentum"]), default="breakout",
               help="Trading strategy to backtest")
 @click.option("--capital", "-c", default=10000.0, help="Initial capital for backtest")
 @click.option("--period", "-p", default="1mo", help="Historical period (1d, 5d, 1mo, 3mo, 6mo, 1y)")

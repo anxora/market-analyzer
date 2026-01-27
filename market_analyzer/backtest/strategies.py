@@ -138,3 +138,39 @@ class MomentumStrategy:
         df.loc[df["Momentum"] < -self.threshold, "Signal"] = Signal.SELL.value
 
         return df
+
+
+class BreakoutStrategy:
+    """Breakout Strategy.
+
+    Buy when price breaks above the highest high of the lookback period.
+    Sell when price breaks below the lowest low of the lookback period.
+    """
+
+    def __init__(self, lookback: int = 20):
+        self.lookback = lookback
+
+    def calculate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate trading signals based on breakout levels.
+
+        Args:
+            df: DataFrame with OHLCV data
+
+        Returns:
+            DataFrame with added signal columns
+        """
+        df = df.copy()
+
+        # Calculate rolling high and low (resistance and support)
+        df["Resistance"] = df["High"].rolling(window=self.lookback).max().shift(1)
+        df["Support"] = df["Low"].rolling(window=self.lookback).min().shift(1)
+
+        df["Signal"] = Signal.HOLD.value
+
+        # Buy when price breaks above resistance (breakout)
+        df.loc[df["Close"] > df["Resistance"], "Signal"] = Signal.BUY.value
+
+        # Sell when price breaks below support (breakdown)
+        df.loc[df["Close"] < df["Support"], "Signal"] = Signal.SELL.value
+
+        return df

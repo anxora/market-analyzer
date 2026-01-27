@@ -1,7 +1,7 @@
 """Backtesting module for trading strategies."""
 
 from .engine import BacktestEngine, BacktestResult, Trade
-from .strategies import Signal, SMAStrategy, RSIStrategy, MomentumStrategy
+from .strategies import Signal, SMAStrategy, RSIStrategy, MomentumStrategy, BreakoutStrategy
 
 __all__ = [
     "BacktestEngine",
@@ -11,4 +11,5 @@ __all__ = [
     "SMAStrategy",
     "RSIStrategy",
     "MomentumStrategy",
+    "BreakoutStrategy",
 ]
